@@ -1,4 +1,5 @@
 import { ApiError } from "../utils/ApiError.js";
+import {ApiResponse} from "../utils/ApiResponse.js"
 import CoinPrice from "../models/crypto.model.js";
 import dotenv from "dotenv";
 
@@ -25,20 +26,24 @@ const getCoinsPrice = async () => {
         }
 
         const data = await response.json();
+        console.log(data)
 
-        const formattedData = Object.keys(data).map(coinId => ({
-            id: coinId,
-            price_usd: data[coinId]?.usd || 0,
-            market_cap_usd: data[coinId]?.usd_market_cap || 0,
-            change_24h: data[coinId]?.usd_24h_change || 0
-        }));
-
+        const formattedData = {
+            coins: Object.keys(data).map(coinId => ({
+                id: coinId,
+                price_usd: data[coinId]?.usd || 0,
+                market_cap_usd: data[coinId]?.usd_market_cap || 0,
+                change_24h: data[coinId]?.usd_24h_change || 0
+            }))
+        };
+        
+console.log(formattedData)
         // Save to database
-        const savedData = await CoinPrice.create({ coins: formattedData });
+        const savedData = await CoinPrice.create(formattedData);
 
-        console.log("Prices saved successfully:", savedData);
+        console.log("Prices saved successfully:", savedData)
 
-        return savedData;
+        return res.status(200).json({savedData});
 
     } catch (error) {
         if (error instanceof ApiError) {
@@ -77,7 +82,7 @@ const getCoinsPrice = async () => {
     }
 };
 
-const fetchCoinData= async()=>{
+const fetchCoinData= async(req,res)=>{
     const { coin } = req.query; 
     if (!coin) {
         return res.status(400).json({ message: "Coin parameter is required" });
@@ -107,4 +112,46 @@ const fetchCoinData= async()=>{
         return res.status(500).json({ message: "Error fetching data", error: error.message });
     }
 }
-export { getCoinsPrice, fetchCoinData };
+const getStandardDeviation = async (req, res) => {
+    try {
+        const { coin } = req.query;
+
+        if (!coin) {
+            throw new ApiError(400, "Coin parameter is required.");
+        }
+
+        const records = await CoinPrice.find({
+            "coins.id": coin
+        })
+            .sort({ timestamp: -1 })  
+            .limit(100); 
+
+        if (records.length === 0) {
+            throw new ApiError(404, "No records found for the requested coin.");
+        }
+
+        const prices = records.map(record =>
+            record.coins.find(coinRecord => coinRecord.id === coin)?.price_usd
+        ).filter(price => price !== undefined);
+
+        if (prices.length === 0) {
+            throw new ApiError(404, `No price data found for ${coin}.`);
+        }
+
+        const mean = prices.reduce((acc, price) => acc + price, 0) / prices.length;
+        const variance = prices.reduce((acc, price) => acc + Math.pow(price - mean, 2), 0) / prices.length;
+        const deviation = Math.sqrt(variance);
+
+        return res.status(200).json(
+            new ApiResponse(200, { deviation: deviation.toFixed(2) }, "Standard deviation calculated successfully.")
+        );
+    } catch (error) {
+        if (error instanceof ApiError) {
+            return res.status(error.status).json(error);
+        }
+
+        return res.status(500).json(new ApiResponse(500, null, "Internal Server Error"));
+    }
+};
+
+export { getCoinsPrice, fetchCoinData, getStandardDeviation};
